@@ -6,9 +6,6 @@
 #include<KokkosBlas3_trsm.hpp>
 #include<KokkosSparse_spmv.hpp>
 
-template<typename exec_space, typename lno_t, typename Matrix>
-void mgsQR(Matrix Q, Matrix R);
-
 int main(int argc, char *argv[]) {
 
   typedef double                             ST;
@@ -46,7 +43,6 @@ int main(int argc, char *argv[]) {
     if (token == std::string("--filename")) filename = argv[++i];
   }
   std::cout << "File to process is: " << filename << std::endl;
-
 
   // Read in a matrix Market file and use it to test the Kokkos Operator.
   KokkosSparse::CrsMatrix<ST, OT, EXSP> A = 
@@ -180,55 +176,20 @@ int main(int argc, char *argv[]) {
       relRes = trueRes/nrmB;
       std::cout << "True Givens relative residual for iteration " << j+(cycle*50) << " is : " << trueRes/nrmB << std::endl;
 
+      if(relRes < convTol){
+        converged = true;
+        Kokkos::deep_copy(X, Xiter); //Final solution is the iteration solution.
+        j = m; //End Arnoldi iteration.
+      }
 
-      //Compute iteration least squares soln with QR:
-      //Compute QR factorization of H:
-      Kokkos::deep_copy(Q,H_h); 
-      ViewMatrixType RFactorSm("RFactorSm", j+1,j+1); //Trying to take a subview of RFactor doesn't work.
-      ViewMatrixType QSub = Kokkos::subview(Q,Kokkos::ALL,Kokkos::make_pair(0,j+1)); 
-      mgsQR<EXSP, int, ViewMatrixType> (QSub,RFactorSm);
-
-      //Now have Hy = LsVec -> QRy = LsVec -> Solve for y
-      auto LsSolnSub = Kokkos::subview(LsSoln,Kokkos::ALL,0); //Original view has rank 2, need a rank 1 here. 
-      KokkosBlas::gemv("T",1.0,Q,LsVec,0.0,LsSolnSub); //LsSoln = Q^T * LsVec 
-      auto LsSolnSub2 = Kokkos::subview(LsSoln,Kokkos::make_pair(0,j+1),Kokkos::ALL);
-      KokkosBlas::trsm("L", "U", "N", "N", 1.0, RFactorSm, LsSolnSub2); //LsSoln = R\LsSoln
-
-      //DEBUG: Check Short residual norm
-      ViewMatrixType CheckMat("C",m+1,m); //To test Q*R=H
-      Kokkos::deep_copy(CheckMat,H_h); //Need H on device to compare
       // DEBUG: Print elts of H:
-      /*std::cout << "Elements of H at copy to CheckMat:" <<std::endl;
+      /*std::cout << "Elements of H " <<std::endl;
         for (int i1 = 0; i1 < m+1; i1++){
         for (int j1 = 0; j1 < m; j1++){
         std::cout << H_h(i1,j1);
         }
         std::cout << std::endl;
         }*/
-      ViewVectorType LsVecCpy("LsVecCpy",m+1);
-      Kokkos::deep_copy(LsVecCpy,LsVec);
-      // DEBUG: Print lsTmpSub
-      /*std::cout << "Elts of LsSolnSub: " << std::endl;
-        Kokkos::deep_copy(LsSoln_h, LsSoln);
-        for (int i3 = 0; i3 < LsSoln_h.extent(0); i3++){
-        std::cout << LsSoln_h(i3,0);
-        }
-        std::cout << std::endl;*/
-      KokkosBlas::gemv("N",-1.0,CheckMat,LsSolnSub,1.0,LsVecCpy); // LsVecCpy = LsVecCpy - CheckMat*LsSoln
-      ST shortRes = KokkosBlas::nrm2(LsVecCpy);
-      std::cout << "Short relative residual for iteration " << j+(cycle*50) << " is: " << shortRes/nrmB << std::endl;
-
-      //Update long solution and residual:
-      VSub = Kokkos::subview(V,Kokkos::ALL,Kokkos::make_pair(0,j+1)); 
-      Kokkos::deep_copy(Xiter,X); //Can't overwrite X with intermediate solution.
-      auto LsSolnSub3 = Kokkos::subview(LsSoln,Kokkos::make_pair(0,j+1),0);
-      KokkosBlas::gemv ("N", 1.0, VSub, LsSolnSub3, 1.0, Xiter); //x_iter = x + V(1:j+1)*lsSoln
-      KokkosSparse::spmv("N", 1.0, A, Xiter, 0.0, Wj); // wj = Ax
-      Kokkos::deep_copy(Res,B); // Reset r=b.
-      KokkosBlas::axpy(-1.0, Wj, Res); // r = b-Ax. 
-      trueRes = KokkosBlas::nrm2(Res);
-      relRes = trueRes/nrmB;
-      std::cout << "True relative residual for iteration " << j+(cycle*50) << " is : " << trueRes/nrmB << std::endl;
 
     }//end Arnoldi iter.
 
@@ -255,40 +216,7 @@ int main(int argc, char *argv[]) {
     std::cout << "ArnRec norm check: " << std::endl;
     for (int i1 = 0; i1 < m; i1++){ std::cout << nrmARec_h(i1) << " " ; }
     std::cout << std::endl; */
-
-    //Compute least squares soln:
-    //Compute QR factorization of H:
-    Kokkos::deep_copy(Q,H_h); 
-    mgsQR<EXSP, int, ViewMatrixType> (Q,RFactor);
-    //Now have Hy = LsVec -> QRy = LsVec -> Solve for y
-    auto LsSolnSub = Kokkos::subview(LsSoln,Kokkos::ALL,0); //Original view has rank 2, need a rank 1 here. 
-    KokkosBlas::gemv("T",1.0,Q,LsVec,0.0,LsSolnSub); //LsSoln = Q^T * LsVec
-    KokkosBlas::trsm("L", "U", "N", "N", 1.0, RFactor, LsSoln); //LsSoln = R\LsSoln
-
-    //DEBUG: Check Short residual norm at end of Arnoldi iteration
-    ViewMatrixType CheckMat("C",m+1,m); 
-    Kokkos::deep_copy(CheckMat,H_h); //Need H on device to compare
-    ViewVectorType LsVecCpy("LsVecCpy",m+1);
-    Kokkos::deep_copy(LsVecCpy,LsVec);
-    KokkosBlas::gemv("N",-1.0,CheckMat,LsSolnSub,1.0,LsVecCpy); // LsVec = LsVec - CheckMat*LsSon
-    ST shortRes = KokkosBlas::nrm2(LsVecCpy);
-    std::cout << "Short residual is: " << shortRes << std::endl;
-
-    //Update long solution and residual:
-    if(VSub.extent(1) != m){
-      VSub = Kokkos::subview(V,Kokkos::ALL,Kokkos::make_pair(0,m)); //TODO: If stops before the mth iter, need this smaller. 
-    }
-    KokkosBlas::gemv ("N", 1.0, VSub, LsSolnSub, 1.0, X); //x = x + V(1:m)*lsSoln
-
-    //TODO Could avoid repeating this with a do-while loop?
-    KokkosSparse::spmv("N", 1.0, A, X, 0.0, Wj); // wj = Ax
-    Kokkos::deep_copy(Res,B); // Reset r=b.
-    KokkosBlas::axpy(-1.0, Wj, Res); // r = b-Ax. 
-    trueRes = KokkosBlas::nrm2(Res);
-    relRes = trueRes/nrmB;
-    std::cout << "Next trueRes is : " << trueRes << std::endl;
-    std::cout << "Next relative residual is : " << relRes << std::endl;
-
+    
     //Zero out Givens rotation vector. 
     Kokkos::deep_copy(GVec_h,0);
 
@@ -312,37 +240,3 @@ int main(int argc, char *argv[]) {
 
 }
 
-
-template<typename exec_space, typename lno_t, typename Matrix>
-void mgsQR(Matrix Q, Matrix R)
-{
-  lno_t k = Q.extent(1);
-  //Set R = I(k)
-  auto Rhost = Kokkos::create_mirror_view(R);
-  for(lno_t i = 0; i < k; i++)
-  {
-    for(lno_t j = 0; j < k; j++)
-      Rhost(i, j) = 0;
-    Rhost(i, i) = 1;
-  }
-  Kokkos::deep_copy(R, Rhost);
-  for(lno_t i = 0; i < k; i++)
-  {
-    auto QcolI = Kokkos::subview(Q, Kokkos::ALL(), i);
-    //normalize column i
-    double colNorm = KokkosBlas::nrm2(QcolI);
-    KokkosBlas::scal(QcolI, 1.0 / colNorm, QcolI);
-    //scale up R row i by inorm
-    auto RrowI = Kokkos::subview(R, i, Kokkos::ALL());
-    KokkosBlas::scal(RrowI, colNorm, RrowI);
-    for(lno_t j = i + 1; j < k; j++)
-    {
-      auto QcolJ = Kokkos::subview(Q, Kokkos::ALL(), j);
-      auto RrowJ = Kokkos::subview(R, j, Kokkos::ALL());
-      //orthogonalize QcolJ against QcolI
-      double d = KokkosBlas::dot(QcolI, QcolJ);
-      KokkosBlas::axpby(-d, QcolI, 1, QcolJ);
-      KokkosBlas::axpby(d, RrowJ, 1, RrowI);
-    }
-  }
-}

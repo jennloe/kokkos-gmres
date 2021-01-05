@@ -65,6 +65,8 @@ int main(int argc, char *argv[]) {
   ViewVectorType::HostMirror TmpGVec_h = Kokkos::create_mirror_view(LsVec); //Copy of this for Givens Rotation intermediate solve. 
   ViewMatrixType LsSoln("LsSoln",m,1);
   ViewMatrixType::HostMirror LsSoln_h = Kokkos::create_mirror_view(LsSoln);//Needed for debugging only
+  ViewMatrixType GLsSoln("GLsSoln",m,1);//LS solution vec for Givens Rotation //TODO can make this 1-D view??
+  ViewMatrixType::HostMirror GLsSoln_h = Kokkos::create_mirror_view(GLsSoln); //This one is needed for triangular solve. 
   ViewHostVectorType CosVal_h("CosVal",m);
   ViewHostVectorType SinVal_h("SinVal",m);
 
@@ -156,6 +158,28 @@ int main(int argc, char *argv[]) {
 
       Vj = Kokkos::subview(V,Kokkos::ALL,j+1); 
       KokkosBlas::scal(Vj,1.0/H_h(j+1,j),Wj); // Wj = Vj/H(j+1,j)
+
+      //Compute least squares soln with Givens rotation:
+      auto GLsSolnSub_h = Kokkos::subview(GLsSoln_h,Kokkos::ALL,0); //Original view has rank 2, need a rank 1 here. 
+      auto GVecSub_h = Kokkos::subview(GVec_h, Kokkos::make_pair(0,m));
+      Kokkos::deep_copy(GLsSolnSub_h, GVecSub_h); //Copy LS rhs vec for triangle solve.
+      auto GLsSolnSub2_h = Kokkos::subview(GLsSoln_h,Kokkos::make_pair(0,j+1),Kokkos::ALL);
+      auto H_copySub_h = Kokkos::subview(H_copy_h, Kokkos::make_pair(0,j+1), Kokkos::make_pair(0,j+1)); //TODO could change type from auto? 
+      KokkosBlas::trsm("L", "U", "N", "N", 1.0, H_copySub_h, GLsSolnSub2_h); //GLsSoln = H\GLsSoln
+      Kokkos::deep_copy(GLsSoln, GLsSoln_h);
+
+      //Update solution and compute residual with Givens:
+      VSub = Kokkos::subview(V,Kokkos::ALL,Kokkos::make_pair(0,j+1)); 
+      Kokkos::deep_copy(Xiter,X); //Can't overwrite X with intermediate solution.
+      auto GLsSolnSub3 = Kokkos::subview(GLsSoln,Kokkos::make_pair(0,j+1),0);
+      KokkosBlas::gemv ("N", 1.0, VSub, GLsSolnSub3, 1.0, Xiter); //x_iter = x + V(1:j+1)*lsSoln
+      KokkosSparse::spmv("N", 1.0, A, Xiter, 0.0, Wj); // wj = Ax
+      Kokkos::deep_copy(Res,B); // Reset r=b.
+      KokkosBlas::axpy(-1.0, Wj, Res); // r = b-Ax. 
+      trueRes = KokkosBlas::nrm2(Res);
+      relRes = trueRes/nrmB;
+      std::cout << "True Givens relative residual for iteration " << j+(cycle*50) << " is : " << trueRes/nrmB << std::endl;
+
 
       //Compute iteration least squares soln with QR:
       //Compute QR factorization of H:

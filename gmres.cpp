@@ -25,7 +25,7 @@ int main(int argc, char *argv[]) {
   bool converged = false;
   int m = 50; //Max subspace size.
   double convTol = 1e-10; //Keep in double.
-  int cycLim = 100;
+  int cycLim = 50;
   int cycle = 0;
   
   //EXAMPLE: Parse cmnd line args: 
@@ -75,7 +75,7 @@ int main(int argc, char *argv[]) {
 
   double trueRes; //Keep this in double regardless so we know how small error gets.
   double nrmB; 
-  double relRes;
+  double relRes, shortRelRes;
 
   // Make rhs random.
   /*int rand_seed = std::rand();
@@ -94,7 +94,7 @@ int main(int argc, char *argv[]) {
   relRes = trueRes/nrmB;
   std::cout << "Initial trueRes is : " << trueRes << std::endl;
     
-  while( relRes > convTol && cycle < cycLim){
+  while( !converged && cycle < cycLim){
     LsVec_h(0) = trueRes;
     Kokkos::deep_copy(LsVec, LsVec_h);
     GVec_h(0) = trueRes;
@@ -141,45 +141,49 @@ int main(int argc, char *argv[]) {
       ST mod = (sqrt(h1*h1 + h2*h2));
       CosVal_h(j) = h1/mod;
       SinVal_h(j) = h2/mod;
-      
+
       //Have to apply this Givens rotation outside the loop- requires the values adjusted in loop to compute cos and sin
       H_copy_h(j,j) = CosVal_h(j)*H_copy_h(j,j) + SinVal_h(j)*H_copy_h(j+1,j);
       H_copy_h(j+1,j) = 0.0; //Do this outside of loop so we get an exact zero here. 
 
       GVec_h(j+1) = GVec_h(j)*(-SinVal_h(j));
       GVec_h(j) = GVec_h(j)*CosVal_h(j);
+      shortRelRes = abs(GVec_h(j+1))/nrmB;
 
       std::cout << std::endl;
-      std::cout << "Shortcut relative residual for iteration " << j+(cycle*50) << " is: " << abs(GVec_h(j+1))/nrmB << std::endl;
+      std::cout << "Shortcut relative residual for iteration " << j+(cycle*50) << " is: " << shortRelRes << std::endl;
 
       Vj = Kokkos::subview(V,Kokkos::ALL,j+1); 
       KokkosBlas::scal(Vj,1.0/H_h(j+1,j),Wj); // Wj = Vj/H(j+1,j)
 
-      //Compute least squares soln with Givens rotation:
-      auto GLsSolnSub_h = Kokkos::subview(GLsSoln_h,Kokkos::ALL,0); //Original view has rank 2, need a rank 1 here. 
-      auto GVecSub_h = Kokkos::subview(GVec_h, Kokkos::make_pair(0,m));
-      Kokkos::deep_copy(GLsSolnSub_h, GVecSub_h); //Copy LS rhs vec for triangle solve.
-      auto GLsSolnSub2_h = Kokkos::subview(GLsSoln_h,Kokkos::make_pair(0,j+1),Kokkos::ALL);
-      auto H_copySub_h = Kokkos::subview(H_copy_h, Kokkos::make_pair(0,j+1), Kokkos::make_pair(0,j+1)); //TODO could change type from auto? 
-      KokkosBlas::trsm("L", "U", "N", "N", 1.0, H_copySub_h, GLsSolnSub2_h); //GLsSoln = H\GLsSoln
-      Kokkos::deep_copy(GLsSoln, GLsSoln_h);
+      //If short residual converged, or time to restart, check true residual
+      if( shortRelRes < convTol || j == m-1 ) {
+        //Compute least squares soln with Givens rotation:
+        auto GLsSolnSub_h = Kokkos::subview(GLsSoln_h,Kokkos::ALL,0); //Original view has rank 2, need a rank 1 here. 
+        auto GVecSub_h = Kokkos::subview(GVec_h, Kokkos::make_pair(0,m));
+        Kokkos::deep_copy(GLsSolnSub_h, GVecSub_h); //Copy LS rhs vec for triangle solve.
+        auto GLsSolnSub2_h = Kokkos::subview(GLsSoln_h,Kokkos::make_pair(0,j+1),Kokkos::ALL);
+        auto H_copySub_h = Kokkos::subview(H_copy_h, Kokkos::make_pair(0,j+1), Kokkos::make_pair(0,j+1)); //TODO could change type from auto? 
+        KokkosBlas::trsm("L", "U", "N", "N", 1.0, H_copySub_h, GLsSolnSub2_h); //GLsSoln = H\GLsSoln
+        Kokkos::deep_copy(GLsSoln, GLsSoln_h);
 
-      //Update solution and compute residual with Givens:
-      VSub = Kokkos::subview(V,Kokkos::ALL,Kokkos::make_pair(0,j+1)); 
-      Kokkos::deep_copy(Xiter,X); //Can't overwrite X with intermediate solution.
-      auto GLsSolnSub3 = Kokkos::subview(GLsSoln,Kokkos::make_pair(0,j+1),0);
-      KokkosBlas::gemv ("N", 1.0, VSub, GLsSolnSub3, 1.0, Xiter); //x_iter = x + V(1:j+1)*lsSoln
-      KokkosSparse::spmv("N", 1.0, A, Xiter, 0.0, Wj); // wj = Ax
-      Kokkos::deep_copy(Res,B); // Reset r=b.
-      KokkosBlas::axpy(-1.0, Wj, Res); // r = b-Ax. 
-      trueRes = KokkosBlas::nrm2(Res);
-      relRes = trueRes/nrmB;
-      std::cout << "True Givens relative residual for iteration " << j+(cycle*50) << " is : " << trueRes/nrmB << std::endl;
+        //Update solution and compute residual with Givens:
+        VSub = Kokkos::subview(V,Kokkos::ALL,Kokkos::make_pair(0,j+1)); 
+        Kokkos::deep_copy(Xiter,X); //Can't overwrite X with intermediate solution.
+        auto GLsSolnSub3 = Kokkos::subview(GLsSoln,Kokkos::make_pair(0,j+1),0);
+        KokkosBlas::gemv ("N", 1.0, VSub, GLsSolnSub3, 1.0, Xiter); //x_iter = x + V(1:j+1)*lsSoln
+        KokkosSparse::spmv("N", 1.0, A, Xiter, 0.0, Wj); // wj = Ax
+        Kokkos::deep_copy(Res,B); // Reset r=b.
+        KokkosBlas::axpy(-1.0, Wj, Res); // r = b-Ax. 
+        trueRes = KokkosBlas::nrm2(Res);
+        relRes = trueRes/nrmB;
+        std::cout << "True Givens relative residual for iteration " << j+(cycle*50) << " is : " << trueRes/nrmB << std::endl;
 
-      if(relRes < convTol){
-        converged = true;
-        Kokkos::deep_copy(X, Xiter); //Final solution is the iteration solution.
-        j = m; //End Arnoldi iteration.
+        if(relRes < convTol){
+          converged = true;
+          Kokkos::deep_copy(X, Xiter); //Final solution is the iteration solution.
+          j = m; //End Arnoldi iteration.
+        }
       }
 
       // DEBUG: Print elts of H:
@@ -193,17 +197,18 @@ int main(int argc, char *argv[]) {
 
     }//end Arnoldi iter.
 
-    //DEBUG: Check orthogonality of V:
-    /*ViewMatrixType Vsm("Vsm", m+1, m+1);
+    /*//DEBUG: Check orthogonality of V:
+    ViewMatrixType Vsm("Vsm", m+1, m+1);
       KokkosBlas::gemm("T","N", 1.0, V, V, 0.0, Vsm); // Vsm = V^T * V
       ViewVectorType nrmV("nrmV",m+1);
-    KokkosBlas::nrm2(nrmV, Vsm); nrmV = norm(Vsm)
+    KokkosBlas::nrm2(nrmV, Vsm); //nrmV = norm(Vsm)
     std::cout << "Norm of V^T V: " << std::endl;
     ViewVectorType::HostMirror nrmV_h = Kokkos::create_mirror_view(nrmV); 
     Kokkos::deep_copy(nrmV_h, nrmV);
-    //for (int i1 = 0; i1 < m+1; i1++){ std::cout << nrmV_h(i1) << " " ; } */
+    for (int i1 = 0; i1 < m+1; i1++){ std::cout << nrmV_h(i1) << " " ; } */
 
     /*//DEBUG: Check Arn Rec AV=VH
+    Kokkos::deep_copy(Q,H_h);
     ViewMatrixType AV("AV", n, m);
     ViewMatrixType VH("VH", n, m);
     KokkosSparse::spmv("N", 1.0, A, VSub, 0.0, AV); //AV = A*V_m
@@ -223,15 +228,20 @@ int main(int argc, char *argv[]) {
     //TODO Can probably remove this at the end.  Used so that we can run full LS problem to 
     //check short residual at each iteration.
     Kokkos::deep_copy(H_h,0);
+    Kokkos::deep_copy(H_copy_h,0);
     cycle++;
+    //This is the end, or it's time to restart. Update solution to most recent vector.
+    Kokkos::deep_copy(X, Xiter);
   }
 
   std::cout << "Ending true residual is: " << trueRes << std::endl;
   std::cout << "Ending relative residual is: " << relRes << std::endl;
-  if( relRes < convTol )
+  if( converged ){
     std::cout << "Solver converged! " << std::endl;
-  else
+  }
+  else{
     std::cout << "Solver did not converge. :( " << std::endl;
+  }
   std::cout << "Number of cycles completed is " << cycle << std::endl;
   std::cout << "which corresponds to " << cycle*m << " iterations." << std::endl;
 

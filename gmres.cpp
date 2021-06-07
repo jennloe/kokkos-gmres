@@ -12,21 +12,21 @@ int main(int argc, char *argv[]) {
   typedef int                               OT;
   typedef Kokkos::DefaultExecutionSpace     EXSP;
 
-  Kokkos::initialize();
-  {
-  std::cout << "Past Kokkos initialize." << std::endl;
   //TODO: Should these really be layout left?
   using ViewVectorType = Kokkos::View<ST*,Kokkos::LayoutLeft, EXSP>;
   using ViewHostVectorType = Kokkos::View<ST*,Kokkos::LayoutLeft, Kokkos::HostSpace>;
   using ViewMatrixType = Kokkos::View<ST**,Kokkos::LayoutLeft, EXSP>; 
 
   std::string filename("Laplace3D10.mtx"); // example matrix
-  //std::string filename("Identity50.mtx"); // example matrix
   bool converged = false;
-  int m = 50; //Max subspace size.
-  double convTol = 1e-10; //Keep in double.
-  int cycLim = 50;
+  int m = 50; //Max subspace size before restarting.
+  double convTol = 1e-10; //Relative residual convergence tolerance.
+  int cycLim = 50; //Max number of restarts or 'cycles'.
   int cycle = 0;
+  int numIters;  //Number of iterations within the cycle before convergence.
+  double trueRes; //Keep this in double regardless so we know how small error gets.
+  double nrmB; 
+  double relRes, shortRelRes;
   
   //EXAMPLE: Parse cmnd line args: 
     /*for (int i=1;i<argc;++i) {
@@ -41,8 +41,25 @@ int main(int argc, char *argv[]) {
   for (int i=1;i<argc;++i) {
     const std::string& token = argv[i];
     if (token == std::string("--filename")) filename = argv[++i];
+    if (token == std::string("--max-subsp")) m = std::atoi(argv[++i]);
+    if (token == std::string("--max-restarts")) cycLim = std::atoi(argv[++i]);
+    if (token == std::string("--tol")) convTol = std::stod(argv[++i]);
+    if (token == std::string("--help") || token == std::string("-h")){
+      std::cout << "Kokkos GMRES solver options:" << std::endl
+        << "--filename    :  The name of a matrix market (.mtx) file for matrix A (Default Laplace3D10.mtx)." << std::endl
+        << "--max-subsp   :  The maximum size of the Kyrlov subspace before restarting (Default 50)." << std::endl
+        << "--max-restarts:  Maximum number of GMRES restarts (Default 50)." << std::endl
+        << "--tol         :  Convergence tolerance.  (Default 1e-8)." << std::endl
+        << "--help  -h    :  Display this help message." << std::endl 
+        << "Example Call  :  ./Gmres.exe --filename Laplace3D100.mtx --tol 1e-5 --max-subsp 100 " << std::endl << std::endl;
+      return 0; }
   }
   std::cout << "File to process is: " << filename << std::endl;
+  std::cout << "Convergence tolerance is: " << convTol << std::endl;
+
+  //Initialize Kokkos AFTER parsing parameters:
+  Kokkos::initialize();
+  {
 
   // Read in a matrix Market file and use it to test the Kokkos Operator.
   KokkosSparse::CrsMatrix<ST, OT, EXSP> A = 
@@ -73,9 +90,6 @@ int main(int argc, char *argv[]) {
   ViewMatrixType V(Kokkos::ViewAllocateWithoutInitializing("V"),n,m+1);
   ViewMatrixType VSub = Kokkos::subview(V,Kokkos::ALL,Kokkos::make_pair(0,m)); //Subview of 1st m cols for updating soln.
 
-  double trueRes; //Keep this in double regardless so we know how small error gets.
-  double nrmB; 
-  double relRes, shortRelRes;
 
   // Make rhs random.
   /*int rand_seed = std::rand();
@@ -127,7 +141,7 @@ int main(int argc, char *argv[]) {
       H_h(j+1,j) = KokkosBlas::nrm2(Wj); 
       H_copy_h(j+1,j) = H_h(j+1,j);
       if(H_h(j+1,j) < 1e-14){ //Host
-        throw std::runtime_error("Lucky breakdown");
+        throw std::runtime_error("Lucky breakdown"); //TODO deal with this correctly? Did we check for convergence?
       }
 
       //Apply Givens rotation and compute shortcut residual:
@@ -151,7 +165,7 @@ int main(int argc, char *argv[]) {
       shortRelRes = abs(GVec_h(j+1))/nrmB;
 
       std::cout << std::endl;
-      std::cout << "Shortcut relative residual for iteration " << j+(cycle*50) << " is: " << shortRelRes << std::endl;
+      std::cout << "Shortcut relative residual for iteration " << j+(cycle*m) << " is: " << shortRelRes << std::endl;
 
       Vj = Kokkos::subview(V,Kokkos::ALL,j+1); 
       KokkosBlas::scal(Vj,1.0/H_h(j+1,j),Wj); // Wj = Vj/H(j+1,j)
@@ -177,12 +191,13 @@ int main(int argc, char *argv[]) {
         KokkosBlas::axpy(-1.0, Wj, Res); // r = b-Ax. 
         trueRes = KokkosBlas::nrm2(Res);
         relRes = trueRes/nrmB;
-        std::cout << "True Givens relative residual for iteration " << j+(cycle*50) << " is : " << trueRes/nrmB << std::endl;
+        std::cout << "True Givens relative residual for iteration " << j+(cycle*m) << " is : " << trueRes/nrmB << std::endl;
+        numIters = j;
 
         if(relRes < convTol){
           converged = true;
           Kokkos::deep_copy(X, Xiter); //Final solution is the iteration solution.
-          j = m; //End Arnoldi iteration.
+          break; //End Arnoldi iteration. 
         }
       }
 
@@ -242,8 +257,7 @@ int main(int argc, char *argv[]) {
   else{
     std::cout << "Solver did not converge. :( " << std::endl;
   }
-  std::cout << "Number of cycles completed is " << cycle << std::endl;
-  std::cout << "which corresponds to " << cycle*m << " iterations." << std::endl;
+  std::cout << "The solver completed " << (cycle-1)*m + numIters << " iterations." << std::endl;
 
   }
   Kokkos::finalize();

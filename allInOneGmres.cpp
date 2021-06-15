@@ -68,8 +68,7 @@ int main(int argc, char *argv[]) {
   ViewHostVectorType CosVal_h("CosVal",m);
   ViewHostVectorType SinVal_h("SinVal",m);
   ViewMatrixType V(Kokkos::ViewAllocateWithoutInitializing("V"),n,m+1);
-  ViewMatrixType VSub = Kokkos::subview(V,Kokkos::ALL,Kokkos::make_pair(0,m)); //Subview of 1st m cols for updating soln. 
-  //TODO why initialize VSub?  Changes later. 
+  ViewMatrixType VSub; //Subview of 1st m cols for updating soln. 
 
   ViewMatrixType Q("Q",m+1,m); //Q matrix for QR factorization of H //Only used in Arn Rec debug. 
   ViewMatrixType::HostMirror H_h = Kokkos::create_mirror_view(Q); //Make H into a host view of Q. 
@@ -97,12 +96,11 @@ int main(int argc, char *argv[]) {
     GVec_h(0) = trueRes;
 
     // Run Arnoldi iteration:
-    auto Vj = Kokkos::subview(V,Kokkos::ALL,0);
+    auto Vj = Kokkos::subview(V,Kokkos::ALL,0); //TODO:pre-declare this so no auto?
     Kokkos::deep_copy(Vj,Res);
     KokkosBlas::scal(Vj,1.0/trueRes,Vj); //V0 = V0/norm(V0)
 
     for (int j = 0; j < m; j++){
-      //auto Vj = Kokkos::subview(V,Kokkos::ALL,j); //TODO Could skip this one and use the v0 earlier and vj at end??
       KokkosSparse::spmv("N", 1.0, A, Vj, 0.0, Wj); //wj = A*Vj
       // Think this is MGS ortho, but 1 vector at a time?
       for (int i = 0; i <= j; i++){

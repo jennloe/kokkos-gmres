@@ -5,7 +5,9 @@ find_package(KokkosKernels REQUIRED)
 
 #add_library(gmres_lib hello.cpp)
 #add_executable(hello.exe hello.cpp)
-add_executable(gmres.exe gmres.cpp)
+add_executable(main.exe main.cpp)
+add_executable(allInOneGmres.exe allInOneGmres.cpp)
 # declare dependency on KokkosKernels
-target_link_libraries(gmres.exe PRIVATE Kokkos::kokkoskernels)
+target_link_libraries(main.exe PRIVATE Kokkos::kokkoskernels)
+target_link_libraries(allInOneGmres.exe PRIVATE Kokkos::kokkoskernels)
 

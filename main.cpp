@@ -20,6 +20,7 @@ int main(int argc, char *argv[]) {
   using ViewMatrixType = Kokkos::View<ST**,Kokkos::LayoutLeft, EXSP>; 
 
   std::string filename("Laplace3D10.mtx"); // example matrix
+  std::string ortho("CGS"); //orthog type
   int m = 50; //Max subspace size before restarting.
   double convTol = 1e-10; //Relative residual convergence tolerance.
   int cycLim = 50;
@@ -30,12 +31,14 @@ int main(int argc, char *argv[]) {
     if (token == std::string("--max-subsp")) m = std::atoi(argv[++i]);
     if (token == std::string("--max-restarts")) cycLim = std::atoi(argv[++i]);
     if (token == std::string("--tol")) convTol = std::stod(argv[++i]);
+    if (token == std::string("--ortho")) ortho = argv[++i];
     if (token == std::string("--help") || token == std::string("-h")){
       std::cout << "Kokkos GMRES solver options:" << std::endl
         << "--filename    :  The name of a matrix market (.mtx) file for matrix A (Default Laplace3D10.mtx)." << std::endl
         << "--max-subsp   :  The maximum size of the Kyrlov subspace before restarting (Default 50)." << std::endl
         << "--max-restarts:  Maximum number of GMRES restarts (Default 50)." << std::endl
         << "--tol         :  Convergence tolerance.  (Default 1e-8)." << std::endl
+        << "--ortho       :  Type of orthogonalization. Use 'CGS' or 'MGS'. (Default 'CGS')" << std::endl
         << "--help  -h    :  Display this help message." << std::endl 
         << "Example Call  :  ./Gmres.exe --filename Laplace3D100.mtx --tol 1e-5 --max-subsp 100 " << std::endl << std::endl;
       return 0; }
@@ -63,7 +66,7 @@ int main(int argc, char *argv[]) {
   // Make rhs ones so that results are repeatable:
   Kokkos::deep_copy(B,1.0);
 
-  gmres<ST, Kokkos::LayoutLeft, EXSP>(A, B, X, convTol, m, cycLim);
+  gmres<ST, Kokkos::LayoutLeft, EXSP>(A, B, X, convTol, m, cycLim, ortho);
 
   //KokkosBlas::axpy(-1.0, , Res); // r = b-Ax. 
   //double endRes = KokkosBlas::nrm2(Res);

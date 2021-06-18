@@ -8,8 +8,9 @@
 
 template< class ScalarType, class Layout, class EXSP, class OrdinalType = int > 
   //TODO: Check- don't pass views by ref, right? What abt CRS matrix?
+  // But Kokkos Blas does pass by ref.... 
   void gmres( KokkosSparse::CrsMatrix<ScalarType, OrdinalType, EXSP> A, Kokkos::View<ScalarType*, Layout, EXSP> B,
-        Kokkos::View<ScalarType*, Layout, EXSP> X, ScalarType tol = 1e-8, int m=50, int maxRestart=50){
+        Kokkos::View<ScalarType*, Layout, EXSP> X, ScalarType tol = 1e-8, int m=50, int maxRestart=50, std::string ortho = "CGS"){
 
   //TODO: Should these really be layout left?
   typedef Kokkos::View<ScalarType*,Layout, EXSP> ViewVectorType;
@@ -29,7 +30,6 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
   ViewVectorType Xiter("Xiter",n); //Intermediate solution at iterations before restart. 
   ViewVectorType Res(Kokkos::ViewAllocateWithoutInitializing("Res"),n); //Residual vector
   ViewVectorType Wj(Kokkos::ViewAllocateWithoutInitializing("W_j"),n); //Tmp work vector 1
-  ViewVectorType TmpVec(Kokkos::ViewAllocateWithoutInitializing("TmpVec"),n); //Tmp work vector 2 //TODO is this needed?
   ViewHostVectorType GVec_h("GVec",m+1);
   ViewMatrixType GLsSoln("GLsSoln",m,1);//LS solution vec for Givens Rotation. Must be 2-D for trsm. 
   typename ViewMatrixType::HostMirror GLsSoln_h = Kokkos::create_mirror_view(GLsSoln); //This one is needed for triangular solve. 
@@ -38,9 +38,9 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
   ViewMatrixType V(Kokkos::ViewAllocateWithoutInitializing("V"),n,m+1);
   ViewMatrixType VSub; //Subview of 1st m cols for updating soln. 
 
-  ViewMatrixType Q("Q",m+1,m); //Q matrix for QR factorization of H //Only used in Arn Rec debug. 
-  typename ViewMatrixType::HostMirror H_h = Kokkos::create_mirror_view(Q); //Make H into a host view of Q. 
-  ViewMatrixType RFactor("RFactor",m,m);// Triangular matrix for QR factorization of H
+  ViewMatrixType H("H",m+1,m); //H matrix on device. Also used in Arn Rec debug. 
+  typename ViewMatrixType::HostMirror H_h = Kokkos::create_mirror_view(H); //Make H into a host view of H. 
+  ViewMatrixType RFactor("RFactor",m,m);// Triangular matrix for QR factorization of H. Used in Arn Rec debug.
 
   //Compute initial residuals:
   nrmB = KokkosBlas::nrm2(B);
@@ -61,19 +61,38 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
 
     for (int j = 0; j < m; j++){
       KokkosSparse::spmv("N", 1.0, A, Vj, 0.0, Wj); //wj = A*Vj
-      // Think this is MGS ortho, but 1 vector at a time?
-      for (int i = 0; i <= j; i++){
-        auto Vi = Kokkos::subview(V,Kokkos::ALL,i); 
-        H_h(i,j) = KokkosBlas::dot(Vi,Wj);  //Vi^* Wj  //TODO is this the right order for cmplx dot product?
-        KokkosBlas::axpy(-H_h(i,j),Vi,Wj);//wj = wj-Hij*Vi //Host
+      if( ortho == "MGS"){
+        for (int i = 0; i <= j; i++){
+          auto Vi = Kokkos::subview(V,Kokkos::ALL,i); 
+          H_h(i,j) = KokkosBlas::dot(Vi,Wj);  //Vi^* Wj  //TODO is this the right order for cmplx dot product?
+          KokkosBlas::axpy(-H_h(i,j),Vi,Wj);//wj = wj-Hij*Vi //Device, right?
+        }
+        auto Hj_h = Kokkos::subview(H_h,Kokkos::make_pair(0,j+1) ,j);
       }
-      //Re-orthog:
+      else if( ortho == "CGS"){
+        auto V0j = Kokkos::subview(V,Kokkos::ALL,Kokkos::make_pair(0,j+1)); //TODO:pre-declare this so no auto?
+        auto Hj = Kokkos::subview(H,Kokkos::make_pair(0,j+1) ,j);
+        auto Hj_h = Kokkos::subview(H_h,Kokkos::make_pair(0,j+1) ,j);
+        KokkosBlas::gemv("T", 1.0, V0j, Wj, 0.0, Hj); // Hj = Vj^T * wj
+        KokkosBlas::gemv("N", -1.0, V0j, Hj, 1.0, Wj); // wj = wj - Vj * Hj
+
+        //Re-orthog CGS:
+        ViewVectorType tmp(Kokkos::ViewAllocateWithoutInitializing("tmp"),j+1); 
+        KokkosBlas::gemv("T", 1.0, V0j, Wj, 0.0, tmp); // tmp (Hj) = Vj^T * wj
+        KokkosBlas::gemv("N", -1.0, V0j, tmp, 1.0, Wj); // wj = wj - Vj * tmp 
+        KokkosBlas::axpy(1.0, tmp, Hj); // Hj = Hj + tmp
+        Kokkos::deep_copy(Hj_h,Hj);
+      }
+      else {
+        throw std::invalid_argument("Invalid argument for 'ortho'.  Please use 'CGS' or 'MGS'.");
+      }
+
+      //Re-orthog MGS:
 /*      for (int i = 0; i <= j; i++){
         auto Vi = Kokkos::subview(V,Kokkos::ALL,i); 
         tmpScalar = KokkosBlas::dot(Vi,Wj); //Vi^* Wj
         KokkosBlas::axpy(-tmpScalar,Vi,Wj);//wj = wj-tmpScalar*Vi
         H_h(i,j) = H_h(i,j) + tmpScalar; 
-        KokkosBlas::scal(TmpVec,H_h(i,j),Vi);//TmpVec = H_h(i,j)*Vi 
       }*/
       
       H_h(j+1,j) = KokkosBlas::nrm2(Wj); 
@@ -159,11 +178,11 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
     for (int i1 = 0; i1 < m+1; i1++){ std::cout << nrmV_h(i1) << " " ; } */
 
     /*//DEBUG: Check Arn Rec AV=VH
-    Kokkos::deep_copy(Q,H_h);
+    Kokkos::deep_copy(H,H_h);
     ViewMatrixType AV("AV", n, m);
     ViewMatrixType VH("VH", n, m);
     KokkosSparse::spmv("N", 1.0, A, VSub, 0.0, AV); //AV = A*V_m
-    KokkosBlas::gemm("N","N", 1.0, V, Q, 0.0, VH); //VH = V*Q
+    KokkosBlas::gemm("N","N", 1.0, V, H, 0.0, VH); //VH = V*H
     KokkosBlas::axpy(-1.0, AV, VH); //VH = VH-AV
     ViewVectorType nrmARec("ARNrm", m);
     ViewVectorType::HostMirror nrmARec_h = Kokkos::create_mirror_view(nrmARec); 

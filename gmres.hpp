@@ -178,12 +178,13 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
     /*//DEBUG: Check orthogonality of V:
     ViewMatrixType Vsm("Vsm", m+1, m+1);
       KokkosBlas::gemm("C","N", one, V, V, zero, Vsm); // Vsm = V^T * V
-      ViewVectorType nrmV("nrmV",m+1);
+      Kokkos::View<MT*, Layout, EXSP> nrmV("nrmV",m+1);
     KokkosBlas::nrm2(nrmV, Vsm); //nrmV = norm(Vsm)
-    std::cout << "Norm of V^T V: " << std::endl;
-    ViewVectorType::HostMirror nrmV_h = Kokkos::create_mirror_view(nrmV); 
+    std::cout << "Norm of V^T V (Should be all ones.): " << std::endl;
+      typename Kokkos::View<MT*, Layout, EXSP>::HostMirror nrmV_h = Kokkos::create_mirror_view(nrmV); 
     Kokkos::deep_copy(nrmV_h, nrmV);
-    for (int i1 = 0; i1 < m+1; i1++){ std::cout << nrmV_h(i1) << " " ; } */
+    for (int i1 = 0; i1 < m+1; i1++){ std::cout << nrmV_h(i1) << " " ; } 
+    std::cout << std::endl;*/
 
     /*//DEBUG: Check Arn Rec AV=VH
     Kokkos::deep_copy(H,H_h);
@@ -192,13 +193,13 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
     KokkosSparse::spmv("N", one, A, VSub, zero, AV); //AV = A*V_m
     KokkosBlas::gemm("N","N", one, V, H, zero, VH); //VH = V*H
     KokkosBlas::axpy(-one, AV, VH); //VH = VH-AV
-    ViewVectorType nrmARec("ARNrm", m);
-    ViewVectorType::HostMirror nrmARec_h = Kokkos::create_mirror_view(nrmARec); 
+    Kokkos::View<MT*, Layout, EXSP> nrmARec("ARNrm", m);
+    typename Kokkos::View<MT*, Layout, EXSP>::HostMirror nrmARec_h = Kokkos::create_mirror_view(nrmARec); 
     KokkosBlas::nrm2( nrmARec, VH); //nrmARec = norm(VH)
     Kokkos::deep_copy(nrmARec_h, nrmARec);
-    std::cout << "ArnRec norm check: " << std::endl;
+    std::cout << "ArnRec norm check (Should be all zeros.): " << std::endl;
     for (int i1 = 0; i1 < m; i1++){ std::cout << nrmARec_h(i1) << " " ; }
-    std::cout << std::endl; */
+    std::cout << std::endl;*/
     
     cycle++;
 

@@ -12,11 +12,11 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
   void gmres( KokkosSparse::CrsMatrix<ScalarType, OrdinalType, EXSP> A, Kokkos::View<ScalarType*, Layout, EXSP> B,
         Kokkos::View<ScalarType*, Layout, EXSP> X, typename Kokkos::Details::ArithTraits<ScalarType>::mag_type tol = 1e-8, int m=50, int maxRestart=50, std::string ortho = "CGS"){
 
-  typedef Kokkos::Details::ArithTraits<ScalarType> ArithTraits;
-  typedef typename ArithTraits::val_type ST; // So this code will run with ScalarType = std::complex<T>.
-  typedef typename ArithTraits::mag_type MT; 
-  ST one = ArithTraits::one();
-  ST zero = ArithTraits::zero();
+  typedef Kokkos::Details::ArithTraits<ScalarType> AT;
+  typedef typename AT::val_type ST; // So this code will run with ScalarType = std::complex<T>.
+  typedef typename AT::mag_type MT; 
+  ST one = AT::one();
+  ST zero = AT::zero();
 
   //TODO: Should these really be layout left?
   typedef Kokkos::View<ST*,Layout, EXSP> ViewVectorType;
@@ -47,7 +47,6 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
 
   ViewMatrixType H("H",m+1,m); //H matrix on device. Also used in Arn Rec debug. 
   typename ViewMatrixType::HostMirror H_h = Kokkos::create_mirror_view(H); //Make H into a host view of H. 
-  Kokkos::deep_copy(H,H_h); // Init H_h to 0 for debugging. 
   ViewMatrixType RFactor("RFactor",m,m);// Triangular matrix for QR factorization of H. Used in Arn Rec debug.
 
   //Compute initial residuals:
@@ -112,50 +111,27 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
       Vj = Kokkos::subview(V,Kokkos::ALL,j+1); 
       KokkosBlas::scal(Vj,one/H_h(j+1,j),Wj); // Wj = Vj/H(j+1,j)
 
-
-      /*//Old Givens for real only:
-      //Apply Givens rotation and compute shortcut residual:
+      // Givens for real and complex (See Alg 3 in "On computing Givens rotations reliably and efficiently"
+      // by Demmel, et. al. 2001)
+      // Apply Givens rotation and compute shortcut residual:
       for(int i=0; i<j; i++){
         ST tempVal = CosVal_h(i)*H_h(i,j) + SinVal_h(i)*H_h(i+1,j);
-        H_h(i+1,j) = -SinVal_h(i)*H_h(i,j) + CosVal_h(i)*H_h(i+1,j);
-        H_h(i,j) = tempVal;
-      }
-      ST h1 = H_h(j,j);
-      ST h2 = H_h(j+1,j);
-      ST mod = (sqrt(h1*h1 + h2*h2));
-      CosVal_h(j) = h1/mod;
-      SinVal_h(j) = h2/mod;
-
-      //Have to apply this Givens rotation outside the loop- requires the values adjusted in loop to compute cos and sin
-      H_h(j,j) = CosVal_h(j)*H_h(j,j) + SinVal_h(j)*H_h(j+1,j);
-      H_h(j+1,j) = zero; //Do this outside of loop so we get an exact zero here. 
-
-      GVec_h(j+1) = GVec_h(j)*(-SinVal_h(j));
-      GVec_h(j) = GVec_h(j)*CosVal_h(j);
-      shortRelRes = abs(GVec_h(j+1))/nrmB;*/
-
-      //New Givens for real and complex (See Alg 3 in "On computing Givens rotations reliably and efficiently"
-      //by Demmel, et. al. 2001)
-
-      //Apply Givens rotation and compute shortcut residual:
-      for(int i=0; i<j; i++){
-        ST tempVal = CosVal_h(i)*H_h(i,j) + SinVal_h(i)*H_h(i+1,j);
-        H_h(i+1,j) = -ArithTraits::conj(SinVal_h(i))*H_h(i,j) + CosVal_h(i)*H_h(i+1,j);
+        H_h(i+1,j) = -AT::conj(SinVal_h(i))*H_h(i,j) + CosVal_h(i)*H_h(i+1,j);
         H_h(i,j) = tempVal;
       }
       ST f = H_h(j,j);
       ST g = H_h(j+1,j);
-      MT f2 = ArithTraits::real(f)*ArithTraits::real(f) + ArithTraits::imag(f)*ArithTraits::imag(f); //TODO simplify? compute real/imag sooner?
-      MT g2 = ArithTraits::real(g)*ArithTraits::real(g) + ArithTraits::imag(g)*ArithTraits::imag(g);
+      MT f2 = AT::real(f)*AT::real(f) + AT::imag(f)*AT::imag(f); 
+      MT g2 = AT::real(g)*AT::real(g) + AT::imag(g)*AT::imag(g);
       ST fg2 = f2 + g2;
       ST D1 = one / sqrt(f2*fg2); //TODO should use sqrt from ArithTraits?
       CosVal_h(j) = f2*D1;
       fg2 = fg2 * D1;
       H_h(j,j) = f*fg2;
-      SinVal_h(j) = f*D1*ArithTraits::conj(g);
+      SinVal_h(j) = f*D1*AT::conj(g);
       H_h(j+1,j) = zero; 
 
-      GVec_h(j+1) = GVec_h(j)*(-ArithTraits::conj(SinVal_h(j)));
+      GVec_h(j+1) = GVec_h(j)*(-AT::conj(SinVal_h(j)));
       GVec_h(j) = GVec_h(j)*CosVal_h(j);
       shortRelRes = abs(GVec_h(j+1))/nrmB;
 
@@ -214,23 +190,6 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
     for (int i1 = 0; i1 < m+1; i1++){ std::cout << nrmV_h(i1) << " " ; } 
     std::cout << std::endl;*/
 
-    // This debug does not currently make sense 
-    // since H is modified via Givens rotations.
-    /*//DEBUG: Check Arn Rec AV=VH
-    Kokkos::deep_copy(H,H_h);
-    ViewMatrixType AV("AV", n, m);
-    ViewMatrixType VH("VH", n, m);
-    KokkosSparse::spmv("N", one, A, VSub, zero, AV); //AV = A*V_m
-    KokkosBlas::gemm("N","N", one, V, H, zero, VH); //VH = V*H
-    KokkosBlas::axpy(-one, AV, VH); //VH = VH-AV
-    Kokkos::View<MT*, Layout, EXSP> nrmARec("ARNrm", m);
-    typename Kokkos::View<MT*, Layout, EXSP>::HostMirror nrmARec_h = Kokkos::create_mirror_view(nrmARec); 
-    KokkosBlas::nrm2( nrmARec, VH); //nrmARec = norm(VH)
-    Kokkos::deep_copy(nrmARec_h, nrmARec);
-    std::cout << "ArnRec norm check (Should be all zeros.): " << std::endl;
-    for (int i1 = 0; i1 < m; i1++){ std::cout << nrmARec_h(i1) << " " ; }
-    std::cout << std::endl;*/
-    
     cycle++;
 
     //This is the end, or it's time to restart. Update solution to most recent vector.

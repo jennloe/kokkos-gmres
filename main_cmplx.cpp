@@ -19,11 +19,11 @@ int main(int argc, char *argv[]) {
   using ViewHostVectorType = Kokkos::View<ST*,Kokkos::LayoutLeft, Kokkos::HostSpace>;
   using ViewMatrixType = Kokkos::View<ST**,Kokkos::LayoutLeft, EXSP>; 
 
-  std::string filename("aft02.mtx"); // example matrix
+  std::string filename("young1c.mtx"); // example matrix
   std::string ortho("CGS"); //orthog type
   int m = 50; //Max subspace size before restarting.
-  double convTol = 1e-10; //Relative residual convergence tolerance.
-  int cycLim = 50;
+  double convTol = 1e-08; //Relative residual convergence tolerance.
+  int cycLim = 60;
 
   for (int i=1;i<argc;++i) {
     const std::string& token = argv[i];

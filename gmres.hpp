@@ -47,6 +47,7 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
 
   ViewMatrixType H("H",m+1,m); //H matrix on device. Also used in Arn Rec debug. 
   typename ViewMatrixType::HostMirror H_h = Kokkos::create_mirror_view(H); //Make H into a host view of H. 
+  Kokkos::deep_copy(H,H_h); // Init H_h to 0 for debugging. 
   ViewMatrixType RFactor("RFactor",m,m);// Triangular matrix for QR factorization of H. Used in Arn Rec debug.
 
   //Compute initial residuals:
@@ -111,6 +112,8 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
       Vj = Kokkos::subview(V,Kokkos::ALL,j+1); 
       KokkosBlas::scal(Vj,one/H_h(j+1,j),Wj); // Wj = Vj/H(j+1,j)
 
+
+      /*//Old Givens for real only:
       //Apply Givens rotation and compute shortcut residual:
       for(int i=0; i<j; i++){
         ST tempVal = CosVal_h(i)*H_h(i,j) + SinVal_h(i)*H_h(i+1,j);
@@ -128,6 +131,31 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
       H_h(j+1,j) = zero; //Do this outside of loop so we get an exact zero here. 
 
       GVec_h(j+1) = GVec_h(j)*(-SinVal_h(j));
+      GVec_h(j) = GVec_h(j)*CosVal_h(j);
+      shortRelRes = abs(GVec_h(j+1))/nrmB;*/
+
+      //New Givens for real and complex (See Alg 3 in "On computing Givens rotations reliably and efficiently"
+      //by Demmel, et. al. 2001)
+
+      //Apply Givens rotation and compute shortcut residual:
+      for(int i=0; i<j; i++){
+        ST tempVal = CosVal_h(i)*H_h(i,j) + SinVal_h(i)*H_h(i+1,j);
+        H_h(i+1,j) = -ArithTraits::conj(SinVal_h(i))*H_h(i,j) + CosVal_h(i)*H_h(i+1,j);
+        H_h(i,j) = tempVal;
+      }
+      ST f = H_h(j,j);
+      ST g = H_h(j+1,j);
+      MT f2 = ArithTraits::real(f)*ArithTraits::real(f) + ArithTraits::imag(f)*ArithTraits::imag(f); //TODO simplify? compute real/imag sooner?
+      MT g2 = ArithTraits::real(g)*ArithTraits::real(g) + ArithTraits::imag(g)*ArithTraits::imag(g);
+      ST fg2 = f2 + g2;
+      ST D1 = one / sqrt(f2*fg2); //TODO should use sqrt from ArithTraits?
+      CosVal_h(j) = f2*D1;
+      fg2 = fg2 * D1;
+      H_h(j,j) = f*fg2;
+      SinVal_h(j) = f*D1*ArithTraits::conj(g);
+      H_h(j+1,j) = zero; 
+
+      GVec_h(j+1) = GVec_h(j)*(-ArithTraits::conj(SinVal_h(j)));
       GVec_h(j) = GVec_h(j)*CosVal_h(j);
       shortRelRes = abs(GVec_h(j+1))/nrmB;
 
@@ -180,12 +208,14 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
       KokkosBlas::gemm("C","N", one, V, V, zero, Vsm); // Vsm = V^T * V
       Kokkos::View<MT*, Layout, EXSP> nrmV("nrmV",m+1);
     KokkosBlas::nrm2(nrmV, Vsm); //nrmV = norm(Vsm)
-    std::cout << "Norm of V^T V (Should be all ones.): " << std::endl;
+    std::cout << "Norm of V^T V (Should be all ones, except ending iteration.): " << std::endl;
       typename Kokkos::View<MT*, Layout, EXSP>::HostMirror nrmV_h = Kokkos::create_mirror_view(nrmV); 
     Kokkos::deep_copy(nrmV_h, nrmV);
     for (int i1 = 0; i1 < m+1; i1++){ std::cout << nrmV_h(i1) << " " ; } 
     std::cout << std::endl;*/
 
+    // This debug does not currently make sense 
+    // since H is modified via Givens rotations.
     /*//DEBUG: Check Arn Rec AV=VH
     Kokkos::deep_copy(H,H_h);
     ViewMatrixType AV("AV", n, m);

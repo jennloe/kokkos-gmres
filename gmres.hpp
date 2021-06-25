@@ -26,10 +26,8 @@ struct GmresStats {
 };
 
 template< class ScalarType, class Layout, class EXSP, class OrdinalType = int > 
-  //TODO: Check- don't pass views by ref, right? What abt CRS matrix?
-  // But Kokkos Blas does pass by ref.... 
-  GmresStats gmres( KokkosSparse::CrsMatrix<ScalarType, OrdinalType, EXSP> A, Kokkos::View<ScalarType*, Layout, EXSP> B,
-        Kokkos::View<ScalarType*, Layout, EXSP> X, typename Kokkos::Details::ArithTraits<ScalarType>::mag_type tol = 1e-8, int m=50, int maxRestart=50, std::string ortho = "CGS"){
+  GmresStats gmres( KokkosSparse::CrsMatrix<ScalarType, OrdinalType, EXSP> &A, Kokkos::View<ScalarType*, Layout, EXSP> &B,
+        Kokkos::View<ScalarType*, Layout, EXSP> &X, typename Kokkos::Details::ArithTraits<ScalarType>::mag_type tol = 1e-8, int m=50, int maxRestart=50, std::string ortho = "CGS2"){
 
   typedef Kokkos::Details::ArithTraits<ScalarType> AT;
   typedef typename AT::val_type ST; // So this code will run with ScalarType = std::complex<T>.
@@ -82,7 +80,7 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
     GVec_h(0) = trueRes;
 
     // Run Arnoldi iteration:
-    auto Vj = Kokkos::subview(V,Kokkos::ALL,0); //TODO:pre-declare this so no auto?
+    auto Vj = Kokkos::subview(V,Kokkos::ALL,0); 
     Kokkos::deep_copy(Vj,Res);
     KokkosBlas::scal(Vj,one/trueRes,Vj); //V0 = V0/norm(V0)
 
@@ -91,13 +89,13 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
       if( ortho == "MGS"){
         for (int i = 0; i <= j; i++){
           auto Vi = Kokkos::subview(V,Kokkos::ALL,i); 
-          H_h(i,j) = KokkosBlas::dot(Vi,Wj);  //Vi^* Wj  //TODO is this the right order for cmplx dot product?
-          KokkosBlas::axpy(-H_h(i,j),Vi,Wj);//wj = wj-Hij*Vi //Device, right?
+          H_h(i,j) = KokkosBlas::dot(Vi,Wj);  //Vi^* Wj  
+          KokkosBlas::axpy(-H_h(i,j),Vi,Wj);//wj = wj-Hij*Vi 
         }
         auto Hj_h = Kokkos::subview(H_h,Kokkos::make_pair(0,j+1) ,j);
       }
-      else if( ortho == "CGS"){
-        auto V0j = Kokkos::subview(V,Kokkos::ALL,Kokkos::make_pair(0,j+1)); //TODO:pre-declare this so no auto?
+      else if( ortho == "CGS2"){
+        auto V0j = Kokkos::subview(V,Kokkos::ALL,Kokkos::make_pair(0,j+1)); 
         auto Hj = Kokkos::subview(H,Kokkos::make_pair(0,j+1) ,j);
         auto Hj_h = Kokkos::subview(H_h,Kokkos::make_pair(0,j+1) ,j);
         KokkosBlas::gemv("C", one, V0j, Wj, zero, Hj); // Hj = Vj^T * wj
@@ -111,7 +109,7 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
         Kokkos::deep_copy(Hj_h,Hj);
       }
       else {
-        throw std::invalid_argument("Invalid argument for 'ortho'.  Please use 'CGS' or 'MGS'.");
+        throw std::invalid_argument("Invalid argument for 'ortho'.  Please use 'CGS2' or 'MGS'.");
       }
 
       //Re-orthog MGS:
@@ -164,7 +162,7 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
         auto GVecSub_h = Kokkos::subview(GVec_h, Kokkos::make_pair(0,m));
         Kokkos::deep_copy(GLsSolnSub_h, GVecSub_h); //Copy LS rhs vec for triangle solve.
         auto GLsSolnSub2_h = Kokkos::subview(GLsSoln_h,Kokkos::make_pair(0,j+1),Kokkos::ALL);
-        auto H_Sub_h = Kokkos::subview(H_h, Kokkos::make_pair(0,j+1), Kokkos::make_pair(0,j+1)); //TODO could change type from auto? 
+        auto H_Sub_h = Kokkos::subview(H_h, Kokkos::make_pair(0,j+1), Kokkos::make_pair(0,j+1)); 
         KokkosBlas::trsm("L", "U", "N", "N", one, H_Sub_h, GLsSolnSub2_h); //GLsSoln = H\GLsSoln
         Kokkos::deep_copy(GLsSoln, GLsSoln_h);
 

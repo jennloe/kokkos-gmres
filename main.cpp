@@ -56,6 +56,7 @@ int main(int argc, char *argv[]) {
 
   int n = A.numRows();
   ViewVectorType X("X",n); //Solution and initial guess
+  ViewVectorType Wj("Wj",n); //For checking residuals at end.
   ViewVectorType B(Kokkos::ViewAllocateWithoutInitializing("B"),n);//right-hand side vec
 
   // Make rhs random.
@@ -66,11 +67,18 @@ int main(int argc, char *argv[]) {
   // Make rhs ones so that results are repeatable:
   Kokkos::deep_copy(B,1.0);
 
-  gmres<ST, Kokkos::LayoutLeft, EXSP>(A, B, X, convTol, m, cycLim, ortho);
+  GmresStats solveStats = gmres<ST, Kokkos::LayoutLeft, EXSP>(A, B, X, convTol, m, cycLim, ortho);
 
-  //KokkosBlas::axpy(-1.0, , Res); // r = b-Ax. 
-  //double endRes = KokkosBlas::nrm2(Res);
-  //std::cout << "Verify from main: Ending residual is " << 
+  // Double check residuals at end of solve:
+  double nrmB = KokkosBlas::nrm2(B);
+  KokkosSparse::spmv("N", 1.0, A, X, 0.0, Wj); // wj = Ax
+  KokkosBlas::axpy(-1.0, Wj, B); // b = b-Ax. 
+  double endRes = KokkosBlas::nrm2(B)/nrmB;
+  std::cout << "Verify from main: Ending residual is " << endRes << std::endl;
+  std::cout << "Number of iterations is: " << solveStats.numIters << std::endl;
+  std::cout << "Diff of residual from main - residual from solver: " << solveStats.minRelRes - endRes << std::endl;
+  std::cout << "Convergence flag is : " << solveStats.convFlag() << std::endl;
+  
 
   }
   Kokkos::finalize();

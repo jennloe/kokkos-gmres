@@ -6,10 +6,29 @@
 #include<KokkosBlas3_trsm.hpp>
 #include<KokkosSparse_spmv.hpp>
 
+struct GmresStats {
+  int numIters;
+  double minRelRes;
+  enum FLAG { Conv, NoConv, LOA };
+  FLAG convFlagVal;
+  std::string convFlag() {
+    switch(convFlagVal){
+      case Conv:
+        return "Converged";
+      case NoConv:
+        return "Not Converged";
+      case LOA:
+        return "Belos had Loss of Accuracy.";
+      default:
+        return "Flag not defined.";
+    }
+  }
+};
+
 template< class ScalarType, class Layout, class EXSP, class OrdinalType = int > 
   //TODO: Check- don't pass views by ref, right? What abt CRS matrix?
   // But Kokkos Blas does pass by ref.... 
-  void gmres( KokkosSparse::CrsMatrix<ScalarType, OrdinalType, EXSP> A, Kokkos::View<ScalarType*, Layout, EXSP> B,
+  GmresStats gmres( KokkosSparse::CrsMatrix<ScalarType, OrdinalType, EXSP> A, Kokkos::View<ScalarType*, Layout, EXSP> B,
         Kokkos::View<ScalarType*, Layout, EXSP> X, typename Kokkos::Details::ArithTraits<ScalarType>::mag_type tol = 1e-8, int m=50, int maxRestart=50, std::string ortho = "CGS"){
 
   typedef Kokkos::Details::ArithTraits<ScalarType> AT;
@@ -30,6 +49,7 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
   MT trueRes; //Keep this in double regardless so we know how small error gets. //TODO: Should this be in double?
   // We are not mixing precisions.  So maybe it should be scalarType? or MT?
   MT nrmB, relRes, shortRelRes;
+  GmresStats myStats;
   
   std::cout << "Convergence tolerance is: " << tol << std::endl;
 
@@ -198,13 +218,19 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
 
   std::cout << "Ending true residual is: " << trueRes << std::endl;
   std::cout << "Ending relative residual is: " << relRes << std::endl;
+  myStats.minRelRes = relRes;
   if( converged ){
     std::cout << "Solver converged! " << std::endl;
+    //TODO Deal with LOA case.
+    myStats.convFlagVal = GmresStats::FLAG::Conv;
   }
   else{
     std::cout << "Solver did not converge. :( " << std::endl;
+    myStats.convFlagVal = GmresStats::FLAG::NoConv;
   }
-  std::cout << "The solver completed " << (cycle-1)*m + numIters << " iterations." << std::endl;
+  myStats.numIters = (cycle-1)*m + numIters;
+  std::cout << "The solver completed " << myStats.numIters << " iterations." << std::endl;
 
+  return myStats;
 }
 

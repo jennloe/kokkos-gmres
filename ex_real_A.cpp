@@ -20,7 +20,7 @@ int main(int argc, char *argv[]) {
   using ViewMatrixType = Kokkos::View<ST**,Kokkos::LayoutLeft, EXSP>; 
 
   std::string filename("Laplace3D10.mtx"); // example matrix
-  std::string ortho("CGS"); //orthog type
+  std::string ortho("CGS2"); //orthog type
   int m = 50; //Max subspace size before restarting.
   double convTol = 1e-10; //Relative residual convergence tolerance.
   int cycLim = 50;
@@ -38,7 +38,7 @@ int main(int argc, char *argv[]) {
         << "--max-subsp   :  The maximum size of the Kyrlov subspace before restarting (Default 50)." << std::endl
         << "--max-restarts:  Maximum number of GMRES restarts (Default 50)." << std::endl
         << "--tol         :  Convergence tolerance.  (Default 1e-8)." << std::endl
-        << "--ortho       :  Type of orthogonalization. Use 'CGS' or 'MGS'. (Default 'CGS')" << std::endl
+        << "--ortho       :  Type of orthogonalization. Use 'CGS2' or 'MGS'. (Default 'CGS2')" << std::endl
         << "--help  -h    :  Display this help message." << std::endl 
         << "Example Call  :  ./Gmres.exe --filename Laplace3D100.mtx --tol 1e-5 --max-subsp 100 " << std::endl << std::endl;
       return 0; }

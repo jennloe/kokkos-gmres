@@ -43,7 +43,7 @@ template< class ScalarType, class Layout, class EXSP, class OrdinalType = int >
 
   bool converged = false;
   int cycle = 0;
-  int numIters;  //Number of iterations within the cycle before convergence.
+  int numIters = 0;  //Number of iterations within the cycle before convergence.
   MT trueRes; //Keep this in double regardless so we know how small error gets. //TODO: Should this be in double?
   // We are not mixing precisions.  So maybe it should be scalarType? or MT?
   MT nrmB, relRes, shortRelRes;
